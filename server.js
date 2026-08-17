@@ -1,0 +1,1023 @@
+const express = require('express');
+const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+const fs = require('fs');
+
+// --- AUTOMATIKUS BIZTONSÁGI MENTÉS INDÍTÁSKOR ---
+try {
+    if (fs.existsSync(path.join(__dirname, 'server.js'))) {
+        fs.copyFileSync(path.join(__dirname, 'server.js'), path.join(__dirname, 'server-backup.js'));
+        console.log('🛡️ Automatikus biztonsági mentés elkészült: server-backup.js');
+    }
+} catch (e) {
+    console.error('Hiba a biztonsági mentés során:', e.message);
+}
+// ------------------------------------------------
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
+
+const dbPath = path.join(__dirname, 'database.sqlite');
+const db = new sqlite3.Database(dbPath, (err) => {
+    if (err) console.error('Hiba az adatbázis megnyitásakor:', err.message);
+    else {
+        console.log('Kapcsolódva a SQLite adatbázishoz.');
+        db.serialize(() => {
+            db.run(`CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, manday REAL, project_name TEXT, week_number TEXT, url TEXT)`);
+            db.run(`ALTER TABLE tasks ADD COLUMN url TEXT`, () => {});
+            db.run(`ALTER TABLE tasks ADD COLUMN completed INTEGER DEFAULT 0`, () => {});
+            db.run(`CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE)`);
+            db.run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`);
+            db.run(`CREATE TABLE IF NOT EXISTS sprint_settings (sprint_key TEXT PRIMARY KEY, capacity REAL, start_date TEXT, end_date TEXT)`);
+            db.run(`CREATE TABLE IF NOT EXISTS developer_capacities (id INTEGER PRIMARY KEY AUTOINCREMENT, sprint_key TEXT, developer_name TEXT, manday REAL)`);
+            db.run(`CREATE TABLE IF NOT EXISTS milestones (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, date TEXT, type TEXT, project_name TEXT)`);
+        });
+    }
+});
+
+app.get('/', (req, res) => {
+    res.send(`<!DOCTYPE html>
+<html lang="hu" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus Roadmap & Capacity Studio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['"Plus Jakarta Sans"', 'sans-serif'] },
+                    colors: {
+                        darker: '#090d16',
+                        card: '#111827',
+                        bordercolor: '#1f293d'
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-darker text-slate-100 min-h-screen p-6 font-sans antialiased selection:bg-indigo-500 selection:text-white">
+    <div class="max-w-7xl mx-auto space-y-8">
+        <!-- MODERN HEADER -->
+        <header class="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-card/60 backdrop-blur-xl border border-bordercolor p-6 rounded-3xl shadow-2xl gap-6">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-xl shadow-lg shadow-indigo-500/20">
+                    ⚡
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight text-white flex items-center gap-2">Nexus Studio <span class="text-xs font-medium px-2.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">Roadmap & Capacity</span></h1>
+                    <p id="header-stats" class="text-xs text-slate-400 mt-1">Statisztikák betöltése...</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 flex-wrap">
+                <button onclick="openSettingsModal()" class="bg-slate-900/80 hover:bg-slate-800 border border-bordercolor text-slate-300 px-4 py-2.5 rounded-xl text-xs font-semibold transition flex items-center gap-2 shadow-sm">⚙️ Paraméterek</button>
+                <button onclick="openNewProjectModal()" class="bg-slate-900/80 hover:bg-slate-800 border border-bordercolor text-emerald-400 px-4 py-2.5 rounded-xl text-xs font-semibold transition flex items-center gap-2 shadow-sm">📁 Új Projekt</button>
+                <button onclick="openNewTaskModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-xs font-semibold transition flex items-center gap-2 shadow-lg shadow-indigo-600/25">＋ Új Feladat</button>
+            </div>
+        </header>
+
+        <!-- FILTERS & SEARCH -->
+        <div class="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4 bg-card/30 p-2 rounded-2xl border border-bordercolor/50">
+            <div id="project-filters" class="flex gap-2 flex-wrap items-center"></div>
+            <div class="flex items-center gap-2">
+                <div class="relative w-full md:w-64">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-500 text-xs">🔍</span>
+                    <input type="text" id="searchQuery" oninput="handleSearchChange()" placeholder="Keresés feladatban..." class="w-full bg-card border border-bordercolor rounded-xl pl-9 pr-4 py-2 text-xs text-white outline-none focus:border-indigo-500 transition shadow-inner">
+                </div>
+            </div>
+        </div>
+
+        <!-- NAPTÁR KOMPONENS SZEKCIÓ -->
+        <div class="bg-card border border-bordercolor rounded-3xl p-6 shadow-xl space-y-5">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-bordercolor pb-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">📅</div>
+                    <div>
+                        <h2 class="text-xs font-bold uppercase tracking-wider text-amber-400">Projekt Naptár & Mérföldkövek</h2>
+                        <span id="calendar-range-label" class="text-[10px] text-slate-400 font-mono"></span>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 flex-wrap">
+                    <button onclick="openNewMilestoneModal()" class="bg-amber-500/10 border border-amber-500/25 hover:bg-amber-500/20 text-amber-300 px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm">🚩 Új Mérföldkő</button>
+                    <select id="calendarViewSelect" onchange="changeCalendarView(this.value)" class="bg-darker border border-bordercolor rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500 transition">
+                        <option value="sprint">Sprint nézet (Napi)</option>
+                        <option value="monthly">Havi nézet (Sprint)</option>
+                        <option value="quarterly">Negyedéves nézet (Havi + Sprint)</option>
+                        <option value="annual" selected>Éves nézet (Negyedéves)</option>
+                    </select>
+                    <select id="calendarSprintSelect" onchange="renderCalendar()" class="bg-darker border border-bordercolor rounded-xl px-3 py-2 text-xs text-white outline-none hidden">
+                    </select>
+                </div>
+            </div>
+            <div id="calendar-container" class="min-h-[160px] flex items-center justify-center text-xs text-slate-500">
+                Naptár betöltése...
+            </div>
+        </div>
+
+        <!-- MAIN KANBAN & ROADMAP -->
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div class="bg-card border border-bordercolor rounded-3xl p-6 h-[700px] flex flex-col shadow-xl">
+                <div class="flex items-center justify-between mb-4 border-b border-bordercolor pb-4">
+                    <div class="flex items-center gap-2.5">
+                        <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+                        <h2 class="text-xs font-bold uppercase tracking-wider text-slate-200">Backlog</h2>
+                    </div>
+                    <span id="backlog-count" class="bg-darker border border-bordercolor px-2.5 py-0.5 rounded-lg text-[10px] font-mono text-slate-300">0</span>
+                </div>
+                <div id="backlog-list" class="flex-1 overflow-y-auto space-y-3 pr-1" ondragover="event.preventDefault(); event.dataTransfer.dropEffect = 'move';" ondrop="dropTask(event, 'backlog')"></div>
+            </div>
+
+            <div class="lg:col-span-3 h-[700px] overflow-y-auto bg-card border border-bordercolor rounded-3xl p-6 space-y-5 shadow-xl">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b border-bordercolor pb-4 sticky top-0 bg-card/95 backdrop-blur z-10 pt-1">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">🗺️</div>
+                        <h2 class="text-xs font-bold uppercase tracking-wider text-emerald-400" id="roadmap-title">Sprint Roadmap & Kapacitás</h2>
+                    </div>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <select id="roadmapViewSelect" onchange="changeRoadmapView(this.value)" class="bg-darker border border-bordercolor rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500 transition">
+                            <option value="sprint">Sprint nézet (Napi)</option>
+                            <option value="monthly">Havi nézet (Sprint)</option>
+                            <option value="quarterly">Negyedéves nézet (Havi + Sprint)</option>
+                            <option value="annual" selected>Éves nézet (Negyedéves)</option>
+                        </select>
+                        <select id="roadmapSubSelect" onchange="renderRoadmap()" class="bg-darker border border-bordercolor rounded-xl px-3 py-2 text-xs text-white outline-none hidden focus:border-indigo-500 transition">
+                        </select>
+                    </div>
+                </div>
+                <div id="roadmap-root" class="space-y-4"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="projectModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="bg-card border border-bordercolor rounded-3xl p-6 w-full max-w-sm space-y-5 shadow-2xl">
+            <h3 class="text-sm font-bold text-white flex items-center gap-2"><span>📁</span> Új projekt</h3>
+            <input type="text" id="modalProjectName" placeholder="Projekt neve..." class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition">
+            <div class="flex justify-end gap-2 pt-2">
+                <button onclick="closeNewProjectModal()" class="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 border border-bordercolor rounded-xl text-xs text-slate-300 transition">Mégse</button>
+                <button onclick="saveNewProject()" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition shadow-lg shadow-emerald-600/25">Mentés</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="settingsModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="bg-card border border-bordercolor rounded-3xl p-6 w-full max-w-lg space-y-5 shadow-2xl">
+            <h3 class="text-sm font-bold text-white">Általános Paraméterek & Időszak</h3>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Sprint Kezdő Napja</label>
+                    <select id="setStartDayOfWeek" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition">
+                        <option value="1">Hétfő</option>
+                        <option value="2">Kedd</option>
+                        <option value="3" selected>Szerda</option>
+                        <option value="4">Csütörtök</option>
+                        <option value="5">Péntek</option>
+                        <option value="6">Szombat</option>
+                        <option value="0">Vasárnap</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Sprint Hossza (Nap)</label>
+                    <input type="number" id="setSprintDays" value="7" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition">
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Nézet Kezdő Dátum</label>
+                    <input type="date" id="setViewStartDate" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white cursor-pointer outline-none focus:border-indigo-500 transition">
+                </div>
+                <div>
+                    <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Nézet Záró Dátum</label>
+                    <input type="date" id="setViewEndDate" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white cursor-pointer outline-none focus:border-indigo-500 transition">
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-2 border-t border-bordercolor">
+                <button onclick="closeSettingsModal()" class="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 border border-bordercolor rounded-xl text-xs text-slate-300 transition">Mégse</button>
+                <button onclick="saveSettings()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition shadow-lg shadow-indigo-600/25">Mentés</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MÉRFÖLDKŐ HOZZÁADÁSA / SZERKESZTÉSE MODAL -->
+    <div id="milestoneModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="bg-card border border-bordercolor rounded-3xl p-6 w-full max-w-sm space-y-5 shadow-2xl">
+            <h3 class="text-sm font-bold text-white" id="milestoneModalTitle">Új Mérföldkő</h3>
+            <input type="hidden" id="modalMilestoneId">
+            <div>
+                <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Esemény neve</label>
+                <input type="text" id="modalMilestoneTitle" placeholder="pl. Code Freeze / Release" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition">
+            </div>
+            <div>
+                <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Dátum</label>
+                <input type="date" id="modalMilestoneDate" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white cursor-pointer outline-none focus:border-indigo-500 transition">
+            </div>
+            <div>
+                <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Típus / Kategória</label>
+                <select id="modalMilestoneType" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition">
+                    <option value="code_freeze">Code Freeze</option>
+                    <option value="release">Release / Élesítés</option>
+                    <option value="portfolio">Portfolió Esemény</option>
+                    <option value="other">Egyéb</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Projekt (opcionális)</label>
+                <select id="modalMilestoneProject" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition">
+                    <option value="">(Portfolio szintű / Összes)</option>
+                </select>
+            </div>
+            <div class="flex justify-end gap-2 pt-2 border-t border-bordercolor">
+                <button onclick="closeNewMilestoneModal()" class="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 border border-bordercolor rounded-xl text-xs text-slate-300 transition">Mégse</button>
+                <button onclick="saveMilestone()" class="px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-semibold transition shadow-lg shadow-amber-600/25">Mentés</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SPRINT KAPACITÁS FEJLESZTŐNKÉNT MODAL -->
+    <div id="sprintSettingsModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="bg-card border border-bordercolor rounded-3xl p-6 w-full max-w-md space-y-5 shadow-2xl">
+            <h3 class="text-sm font-bold text-white" id="sprintModalTitle">Sprint Kapacitás (Fejlesztők)</h3>
+            <input type="hidden" id="activeSprintKey">
+            <div class="space-y-3 max-h-60 overflow-y-auto pr-1" id="developer-list-container"></div>
+            <button onclick="addDeveloperRow()" class="w-full py-2.5 bg-darker hover:bg-slate-900 border border-bordercolor text-indigo-400 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-2">＋ Fejlesztő hozzáadása</button>
+            <div class="flex justify-end gap-2 pt-2 border-t border-bordercolor">
+                <button onclick="closeSprintSettingsModal()" class="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 border border-bordercolor rounded-xl text-xs text-slate-300 transition">Mégse</button>
+                <button onclick="saveSprintCapacity()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition shadow-lg shadow-indigo-600/25">Mentés</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- FELADAT MÓDOSÍTÁSA / LÉTREHOZÁSA MODAL -->
+    <div id="taskModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="bg-card border border-bordercolor rounded-3xl p-6 w-full max-w-sm space-y-5 shadow-2xl">
+            <h3 class="text-sm font-bold text-white" id="taskModalTitle">Új Feladat</h3>
+            <input type="hidden" id="modalTaskId">
+            <div>
+                <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Feladat neve</label>
+                <input type="text" id="modalTitle" placeholder="Feladat neve..." class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition">
+            </div>
+            <div>
+                <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Projekt</label>
+                <select id="modalProjectSelect" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition"></select>
+            </div>
+            <div>
+                <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Becsült MD (Manday)</label>
+                <input type="number" id="modalManday" value="3" step="0.5" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition">
+            </div>
+            <div>
+                <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Jira URL / Hivatkozás</label>
+                <input type="url" id="modalUrl" placeholder="https://jira.company.com/browse/KEY-123" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition">
+            </div>
+            <div class="flex justify-end gap-2 pt-2 border-t border-bordercolor">
+                <button onclick="closeNewTaskModal()" class="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 border border-bordercolor rounded-xl text-xs text-slate-300 transition">Mégse</button>
+                <button onclick="saveTask()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition shadow-lg shadow-indigo-600/25">Mentés</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let tasks = [], projects = [], settings = { start_day_of_week: 3, sprint_days: 7, view_start_date: '2026-01-01', view_end_date: '2026-12-31' }, sprintDevs = {}, milestones = [];
+        let selectedProject = 'Összes', searchQuery = '';
+
+        document.addEventListener('click', function(e) {
+            if (e.target && e.target.type === 'date') {
+                try {
+                    if (typeof e.target.showPicker === 'function') {
+                        e.target.showPicker();
+                    }
+                } catch (err) {}
+            }
+        });
+
+        async function loadData() {
+            try {
+                const [tRes, pRes, sRes, devRes, mRes] = await Promise.all([
+                    fetch('/api/tasks').then(r => r.json()),
+                    fetch('/api/projects').then(r => r.json()),
+                    fetch('/api/settings').then(r => r.json()),
+                    fetch('/api/developer-capacities').then(r => r.json()),
+                    fetch('/api/milestones').then(r => r.json())
+                ]);
+                tasks = tRes;
+                projects = pRes;
+                if(sRes && Object.keys(sRes).length > 0) settings = { ...settings, ...sRes };
+                sprintDevs = devRes || {};
+                
+                milestones = (mRes || []).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                renderUI();
+            } catch(e) { console.error(e); }
+        }
+
+        function renderUI() {
+            renderHeaderStats(); renderFilters(); renderBacklog(); renderRoadmap(); renderCalendar();
+        }
+
+        function handleSearchChange() { searchQuery = document.getElementById('searchQuery').value.toLowerCase(); renderBacklog(); renderRoadmap(); renderCalendar(); }
+
+        function renderHeaderStats() {
+            const rel = tasks.filter(t => selectedProject === 'Összes' || t.project_name === selectedProject);
+            const completedCount = rel.filter(t => t.completed).length;
+            document.getElementById('header-stats').innerHTML = \`Projekt: <span class="text-white font-medium">\${selectedProject}</span> • Összes feladat: <span class="text-white font-medium">\${rel.length}</span> (Kész: <span class="text-emerald-400 font-medium">\${completedCount}</span>)\`;
+        }
+
+        function getSprintsList() {
+            const vStart = new Date(settings.view_start_date || '2026-01-01');
+            const vEnd = new Date(settings.view_end_date || '2026-12-31');
+            const targetDay = parseInt(settings.start_day_of_week) || 3;
+            const sDays = parseInt(settings.sprint_days) || 7;
+
+            let curr = new Date(vStart);
+            while(curr.getDay() !== targetDay) {
+                curr.setDate(curr.getDate() - 1);
+            }
+
+            let list = [];
+            let index = 1;
+            while(curr <= vEnd) {
+                let start = new Date(curr);
+                let end = new Date(curr.getTime() + (sDays - 1) * 86400000);
+                list.push({ key: 'S' + index, start, end, index });
+                curr.setDate(curr.getDate() + sDays);
+                index++;
+            }
+            return list;
+        }
+
+        // --- NAPTÁR KOMPONENS & MÉRFÖLDKÖVEK ---
+        function changeCalendarView(viewType) {
+            const sprintSelect = document.getElementById('calendarSprintSelect');
+            if (viewType === 'sprint') {
+                sprintSelect.classList.remove('hidden');
+                populateSprintSelect('calendarSprintSelect');
+            } else {
+                sprintSelect.classList.add('hidden');
+            }
+            renderCalendar();
+        }
+
+        function populateSprintSelect(selectId) {
+            const sprints = getSprintsList();
+            const select = document.getElementById(selectId);
+            const currentVal = select.value;
+            select.innerHTML = sprints.map(s => \`<option value="\${s.key}">Sprint \${s.index} (\${s.key})</option>\`).join('');
+            if (currentVal && sprints.some(s => s.key === currentVal)) {
+                select.value = currentVal;
+            }
+        }
+
+        function getMilestonesBadgeHtml(dateStr) {
+            const relMs = milestones
+                .filter(m => m.date === dateStr && (selectedProject === 'Összes' || !m.project_name || m.project_name === selectedProject))
+                .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            if (relMs.length === 0) return '';
+            return relMs.map(m => {
+                let bg = 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+                if (m.type === 'release') bg = 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+                if (m.type === 'portfolio') bg = 'bg-sky-500/15 text-sky-300 border-sky-500/30';
+                return \`<div onclick="event.stopPropagation(); openEditMilestoneModal(\${m.id})" class="text-[10px] px-2 py-1 rounded-lg border \${bg} font-semibold flex items-center justify-between gap-1 mt-1 cursor-pointer hover:opacity-80 transition shadow-sm" title="\${m.title}">
+                    <span class="truncate">🚩 \${m.title}</span>
+                </div>\`;
+            }).join('');
+        }
+
+        function renderCalendar() {
+            const viewType = document.getElementById('calendarViewSelect').value;
+            const sprints = getSprintsList();
+            document.getElementById('calendar-range-label').innerText = \`Időszak: \${settings.view_start_date || '2026-01-01'} → \${settings.view_end_date || '2026-12-31'}\`;
+            const container = document.getElementById('calendar-container');
+
+            if (sprints.length === 0) {
+                container.innerHTML = '<div class="text-xs text-slate-500 py-4">Nincs sprint a megadott időszakban.</div>';
+                return;
+            }
+
+            if (viewType === 'sprint') {
+                const sprintSelect = document.getElementById('calendarSprintSelect');
+                if (sprintSelect.classList.contains('hidden')) {
+                    sprintSelect.classList.remove('hidden');
+                    populateSprintSelect('calendarSprintSelect');
+                }
+                const activeKey = sprintSelect.value || sprints[0].key;
+                const activeSprint = sprints.find(s => s.key === activeKey) || sprints[0];
+
+                const sprintTasks = tasks.filter(t => (selectedProject === 'Összes' || t.project_name === selectedProject) && t.week_number === activeKey && (!searchQuery || t.title.toLowerCase().includes(searchQuery)));
+
+                let days = [];
+                let curr = new Date(activeSprint.start);
+                while (curr <= activeSprint.end) {
+                    days.push(new Date(curr));
+                    curr.setDate(curr.getDate() + 1);
+                }
+
+                container.innerHTML = \`<div class="w-full space-y-4">
+                    <div class="text-[10px] text-sky-400 font-semibold flex justify-between items-center">
+                        <span>Sprint \${activeSprint.index} Naptár Nézet (\${activeSprint.start.toISOString().split('T')[0]} - \${activeSprint.end.toISOString().split('T')[0]}) • Feladatok száma: \${sprintTasks.length}</span>
+                        <span class="text-slate-400">Kattints a mérföldkőre vagy feladatra a szerkesztéshez</span>
+                    </div>
+                    <div class="grid grid-cols-7 gap-3">
+                        \${days.map((d, index) => {
+                            let dateStr = d.toISOString().split('T')[0];
+                            let dayTasks = sprintTasks.filter((_, tIdx) => tIdx % days.length === index);
+
+                            return \`<div class="bg-darker border border-bordercolor rounded-2xl p-3 min-h-[130px] flex flex-col justify-between hover:border-slate-700 transition">
+                                <div>
+                                    <div class="flex justify-between items-center">
+                                        <div class="text-[9px] text-slate-400 font-bold uppercase tracking-wider">\${['Vas', 'Hét', 'Kedd', 'Szer', 'Csüt', 'Pén', 'Szom'][d.getDay()]}</div>
+                                        <div class="text-xs font-bold text-white">\${d.getDate()}.</div>
+                                    </div>
+                                    <div class="mt-2 space-y-1">
+                                        \${dayTasks.map(t => \`<div onclick="openEditTaskModal(\${t.id})" class="text-[9px] bg-indigo-950/60 border border-indigo-900/60 text-indigo-300 p-1.5 rounded-xl cursor-pointer hover:bg-indigo-900/50 truncate transition" title="\${t.title} (\${t.manday}MD)">
+                                            <span class="font-mono text-[8px] text-indigo-400">[\${t.project_name}]</span> \${t.title}
+                                        </div>\`).join('')}
+                                    </div>
+                                </div>
+                                <div class="pt-2">\${getMilestonesBadgeHtml(dateStr)}</div>
+                            \</div>\`;
+                        }).join('')}
+                    </div>
+                </div>\`;
+            } 
+            else if (viewType === 'monthly') {
+                container.innerHTML = \`<div class="w-full space-y-3">
+                    <div class="text-[10px] text-sky-400 font-semibold">Havi Naptár Nézet (Sprintek & Mérföldkövek)</div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        \${sprints.map(s => {
+                            let sStartStr = s.start.toISOString().split('T')[0];
+                            let sEndStr = s.end.toISOString().split('T')[0];
+                            let relMs = milestones
+                                .filter(m => m.date >= sStartStr && m.date <= sEndStr && (selectedProject === 'Összes' || !m.project_name || m.project_name === selectedProject))
+                                .sort((a, b) => new Date(a.date) - new Date(b.date));
+                            let sTasksCount = tasks.filter(t => (selectedProject === 'Összes' || t.project_name === selectedProject) && t.week_number === s.key).length;
+                            return \`<div class="bg-darker border border-bordercolor rounded-2xl p-4 space-y-3 hover:border-slate-700 transition">
+                                <div class="flex justify-between items-center border-b border-bordercolor pb-2">
+                                    <span class="text-xs font-bold text-indigo-300">Sprint \${s.index}</span>
+                                    <span class="text-[10px] text-slate-400 font-mono">\${s.start.toISOString().split('T')[0].slice(5)} - \${s.end.toISOString().split('T')[0].slice(5)}</span>
+                                </div>
+                                <div class="text-[10px] text-slate-300 font-mono">Feladatok száma: <b class="text-white">\${sTasksCount}</b></div>
+                                <div class="space-y-1.5">
+                                    \${relMs.map(m => \`<div onclick="openEditMilestoneModal(\${m.id})" class="text-[10px] bg-amber-500/10 border border-amber-500/25 text-amber-300 px-2.5 py-1.5 rounded-xl cursor-pointer hover:bg-amber-500/20 truncate transition" title="\${m.date}: \${m.title}">🚩 \${m.date.slice(5)}: \${m.title}</div>\`).join('') || '<span class="text-[10px] text-slate-600 italic">Nincs mérföldkő</span>'}
+                                </div>
+                            \</div>\`;
+                        }).join('')}
+                    </div>
+                </div>\`;
+            } 
+            else if (viewType === 'quarterly') {
+                let months = {};
+                sprints.forEach(s => {
+                    let mName = s.start.toLocaleString('hu-HU', { month: 'long', year: 'numeric' });
+                    if (!months[mName]) months[mName] = [];
+                    months[mName].push(s);
+                });
+
+                container.innerHTML = \`<div class="w-full space-y-3">
+                    <div class="text-[10px] text-sky-400 font-semibold">Negyedéves Naptár Nézet (Havi bontás és Mérföldkövek)</div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        \${Object.entries(months).map(([mName, mSprints]) => {
+                            let firstDay = mSprints[0].start.toISOString().slice(0, 7);
+                            let relMs = milestones
+                                .filter(m => m.date.startsWith(firstDay) && (selectedProject === 'Összes' || !m.project_name || m.project_name === selectedProject))
+                                .sort((a, b) => new Date(a.date) - new Date(b.date));
+                            return \`<div class="bg-darker border border-bordercolor rounded-2xl p-4 space-y-3 hover:border-slate-700 transition">
+                                <div class="text-xs font-bold text-emerald-400 capitalize border-b border-bordercolor pb-2 flex justify-between items-center">
+                                    <span>\${mName}</span>
+                                    <span class="text-[10px] bg-emerald-500/10 text-emerald-300 px-2 py-0.5 rounded-lg border border-emerald-500/20">\${mSprints.length} sprint</span>
+                                </div>
+                                <div class="space-y-2">
+                                    <div class="flex flex-wrap gap-1">
+                                        \${mSprints.map(s => \`<span class="bg-indigo-950/60 border border-indigo-900/50 text-indigo-300 text-[10px] px-2 py-0.5 rounded-md font-mono">S\${s.index}</span>\`).join('')}
+                                    </div>
+                                    <div class="space-y-1.5 pt-1">
+                                        \${relMs.map(m => \`<div onclick="openEditMilestoneModal(\${m.id})" class="text-[10px] bg-amber-500/10 border border-amber-500/25 text-amber-300 px-2.5 py-1 rounded-xl cursor-pointer truncate transition" title="\${m.date}: \${m.title}">🚩 \${m.date.slice(8)}. \${m.title}</div>\`).join('')}
+                                    </div>
+                                </div>
+                            \</div>\`;
+                        }).join('')}
+                    </div>
+                </div>\`;
+            } 
+            else if (viewType === 'annual') {
+                let quarters = { 'Q1 (I. Negyedév)': ['01', '02', '03'], 'Q2 (II. Negyedév)': ['04', '05', '06'], 'Q3 (III. Negyedév)': ['07', '08', '09'], 'Q4 (IV. Negyedév)': ['10', '11', '12'] };
+                const yearPrefix = (settings.view_start_date || '2026').slice(0, 4);
+
+                container.innerHTML = \`<div class="w-full space-y-3">
+                    <div class="text-[10px] text-sky-400 font-semibold">Éves Naptár Nézet (Negyedéves blokkok & Portfolió Mérföldkövek)</div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        \${Object.entries(quarters).map(([qName, qMonths]) => {
+                            let relMs = milestones
+                                .filter(m => qMonths.some(mo => m.date.startsWith(yearPrefix + '-' + mo)) && (selectedProject === 'Összes' || !m.project_name || m.project_name === selectedProject))
+                                .sort((a, b) => new Date(a.date) - new Date(b.date));
+                            return \`<div class="bg-darker border border-bordercolor rounded-2xl p-4 space-y-3 hover:border-slate-700 transition">
+                                <div class="text-xs font-bold text-amber-400 border-b border-bordercolor pb-2">\${qName}</div>
+                                <div class="space-y-1.5">
+                                    \${relMs.map(m => \`<div onclick="openEditMilestoneModal(\${m.id})" class="text-[10px] bg-amber-500/10 border border-amber-500/25 text-amber-300 px-2.5 py-1.5 rounded-xl cursor-pointer truncate transition" title="\${m.date}: \${m.title}">🚩 \${m.date}: \${m.title}</div>\`).join('') || '<span class="text-[10px] text-slate-600 italic">Nincs mérföldkő</span>'}
+                                </div>
+                            \</div>\`;
+                        }).join('')}
+                    </div>
+                </div>\`;
+            }
+        }
+
+        // --- ROADMAP NÉZET KEZELŐK ---
+        function changeRoadmapView(viewType) {
+            const subSelect = document.getElementById('roadmapSubSelect');
+            const sprints = getSprintsList();
+
+            if (viewType === 'annual') {
+                subSelect.classList.add('hidden');
+            } else {
+                subSelect.classList.remove('hidden');
+                if (viewType === 'sprint') {
+                    subSelect.innerHTML = sprints.map(s => \`<option value="\${s.key}">Sprint \${s.index} (\${s.key})</option>\`).join('');
+                } else if (viewType === 'monthly') {
+                    let months = {};
+                    sprints.forEach(s => {
+                        let mKey = s.start.toISOString().slice(0, 7);
+                        let mName = s.start.toLocaleString('hu-HU', { month: 'long', year: 'numeric' });
+                        months[mKey] = mName;
+                    });
+                    subSelect.innerHTML = Object.entries(months).map(([k, name]) => \`<option value="\${k}">\${name}</option>\`).join('');
+                } else if (viewType === 'quarterly') {
+                    subSelect.innerHTML = \`
+                        <option value="Q1">Q1 (I. Negyedév)</option>
+                        <option value="Q2">Q2 (II. Negyedév)</option>
+                        <option value="Q3">Q3 (III. Negyedév)</option>
+                        <option value="Q4">Q4 (IV. Negyedév)</option>
+                    \`;
+                }
+            }
+            renderRoadmap();
+        }
+
+        // --- MÉRFÖLDKŐ MODAL KEZELÉS ---
+        function openNewMilestoneModal() {
+            document.getElementById('modalMilestoneId').value = '';
+            document.getElementById('milestoneModalTitle').innerText = 'Új Mérföldkő';
+            document.getElementById('modalMilestoneTitle').value = '';
+            document.getElementById('modalMilestoneDate').value = new Date().toISOString().split('T')[0];
+            document.getElementById('modalMilestoneType').value = 'code_freeze';
+            
+            const pSelect = document.getElementById('modalMilestoneProject');
+            pSelect.innerHTML = '<option value="">(Portfolio szintű / Összes)</option>' + projects.map(p => \`<option value="\${p.name}">\${p.name}</option>\`).join('');
+            if (selectedProject !== 'Összes') pSelect.value = selectedProject;
+
+            document.getElementById('milestoneModal').classList.replace('hidden', 'flex');
+        }
+
+        function openEditMilestoneModal(id) {
+            const m = milestones.find(x => x.id === id);
+            if (!m) return;
+            document.getElementById('modalMilestoneId').value = m.id;
+            document.getElementById('milestoneModalTitle').innerText = 'Mérföldkő Szerkesztése';
+            document.getElementById('modalMilestoneTitle').value = m.title || '';
+            document.getElementById('modalMilestoneDate').value = m.date || '';
+            document.getElementById('modalMilestoneType').value = m.type || 'code_freeze';
+
+            const pSelect = document.getElementById('modalMilestoneProject');
+            pSelect.innerHTML = '<option value="">(Portfolio szintű / Összes)</option>' + projects.map(p => \`<option value="\${p.name}">\${p.name}</option>\`).join('');
+            pSelect.value = m.project_name || '';
+
+            document.getElementById('milestoneModal').classList.replace('hidden', 'flex');
+        }
+
+        function closeNewMilestoneModal() { document.getElementById('milestoneModal').classList.replace('flex', 'hidden'); }
+
+        async function saveMilestone() {
+            const id = document.getElementById('modalMilestoneId').value;
+            const title = document.getElementById('modalMilestoneTitle').value.trim();
+            const date = document.getElementById('modalMilestoneDate').value;
+            const type = document.getElementById('modalMilestoneType').value;
+            const project_name = document.getElementById('modalMilestoneProject').value;
+
+            if (!title || !date) return alert('Add meg a címet és a dátumot!');
+
+            if (id) {
+                await fetch(\`/api/milestones/\${id}\`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ title, date, type, project_name })
+                });
+            } else {
+                await fetch('/api/milestones', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ title, date, type, project_name })
+                });
+            }
+            closeNewMilestoneModal();
+            loadData();
+        }
+
+        function renderFilters() {
+            document.getElementById('project-filters').innerHTML = \`<button onclick="filterProject('Összes')" class="px-4 py-2 rounded-xl text-xs font-semibold transition \${selectedProject==='Összes'?'bg-indigo-600 text-white shadow-lg shadow-indigo-600/25':'bg-card text-slate-400 hover:text-white border border-bordercolor'}">Összes</button>\` + 
+                projects.map(p => \`<button onclick="filterProject('\${p.name}')" class="px-4 py-2 rounded-xl text-xs font-semibold transition \${selectedProject===p.name?'bg-indigo-600 text-white shadow-lg shadow-indigo-600/25':'bg-card text-slate-400 hover:text-white border border-bordercolor'}">\${p.name}</button>\`).join('');
+        }
+        function filterProject(n) { selectedProject = n; renderUI(); }
+
+        function handleDragStart(e, id) {
+            e.dataTransfer.setData('text/plain', String(id));
+            e.dataTransfer.effectAllowed = 'move';
+        }
+
+        function dropTask(e, w) {
+            e.preventDefault();
+            const id = e.dataTransfer.getData('text/plain');
+            if(id) moveTask(id, w);
+        }
+
+        function getSprintTotalCapacity(sKey) {
+            const devs = sprintDevs[sKey] || [];
+            return devs.reduce((acc, d) => acc + (parseFloat(d.manday) || 0), 0);
+        }
+
+        function renderBacklog() {
+            const list = tasks.filter(t => (selectedProject === 'Összes' || t.project_name === selectedProject) && (!t.week_number || t.week_number === 'backlog') && (!searchQuery || t.title.toLowerCase().includes(searchQuery)));
+            document.getElementById('backlog-count').innerText = list.length;
+            document.getElementById('backlog-list').innerHTML = list.map(t => {
+                const urlBtn = t.url ? \`<a href="\${t.url}" target="_blank" onclick="event.stopPropagation()" class="text-sky-400 hover:text-sky-300 text-xs transition" title="Jira megnyitása">🔗</a>\` : '';
+                return \`<div class="bg-darker p-3 rounded-2xl border border-bordercolor text-xs cursor-grab flex items-center justify-between hover:border-slate-700 transition shadow-sm" draggable="true" ondragstart="handleDragStart(event, \${t.id})">
+                    <div class="flex-1 min-w-0 mr-3 cursor-pointer" onclick="openEditTaskModal(\${t.id})">
+                        <div class="font-semibold text-slate-200 truncate flex items-center gap-2">
+                            <span class="text-[10px] px-2 py-0.5 rounded-lg bg-indigo-500/10 text-indigo-300 border border-indigo-500/25 font-mono">\${t.project_name}</span>
+                            <span class="truncate">\${t.title}</span>
+                        </div>
+                        <div class="text-[10px] text-slate-400 font-mono mt-1">\${t.manday} MD</div>
+                    </div>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        \${urlBtn}
+                        <button onclick="openEditTaskModal(\${t.id})" class="text-slate-500 hover:text-indigo-400 p-1 rounded-lg hover:bg-card transition" title="Szerkesztés">✏️</button>
+                        <button onclick="deleteTask(\${t.id})" class="text-slate-500 hover:text-rose-400 p-1 rounded-lg hover:bg-card transition" title="Törlés">×</button>
+                    </div>
+                </div>\`;
+            }).join('') || '<div class="text-xs text-slate-500 pointer-events-none p-4 text-center">Üres backlog.</div>';
+        }
+
+        function renderRoadmap() {
+            const viewType = document.getElementById('roadmapViewSelect').value;
+            const subSelect = document.getElementById('roadmapSubSelect');
+            const sprints = getSprintsList();
+            document.getElementById('roadmap-title').innerHTML = \`Sprint Roadmap (\${settings.view_start_date} - \${settings.view_end_date})\`;
+            
+            const roadmapContainer = document.getElementById('roadmap-root');
+
+            if (sprints.length === 0) {
+                roadmapContainer.innerHTML = '<div class="text-xs text-slate-500">Nincs sprint a megadott időszakban.</div>';
+                return;
+            }
+
+            let filteredSprints = sprints;
+            if (viewType === 'sprint') {
+                if (subSelect.options.length === 0) changeRoadmapView('sprint');
+                const activeKey = subSelect.value || sprints[0].key;
+                filteredSprints = sprints.filter(s => s.key === activeKey);
+            } else if (viewType === 'monthly') {
+                if (subSelect.options.length === 0) changeRoadmapView('monthly');
+                const activeMonth = subSelect.value || sprints[0].start.toISOString().slice(0, 7);
+                filteredSprints = sprints.filter(s => s.start.toISOString().slice(0, 7) === activeMonth);
+            } else if (viewType === 'quarterly') {
+                if (subSelect.options.length === 0) changeRoadmapView('quarterly');
+                const activeQ = subSelect.value || 'Q1';
+                const qMonths = { 'Q1': ['01', '02', '03'], 'Q2': ['04', '05', '06'], 'Q3': ['07', '08', '09'], 'Q4': ['10', '11', '12'] }[activeQ] || ['01', '02', '03'];
+                filteredSprints = sprints.filter(s => qMonths.includes(s.start.toISOString().slice(5, 7)));
+            }
+
+            roadmapContainer.innerHTML = filteredSprints.map(s => {
+                const sKey = s.key;
+                const capacity = getSprintTotalCapacity(sKey);
+                const sTasks = tasks.filter(t => (selectedProject === 'Összes' || t.project_name === selectedProject) && t.week_number === sKey && (!searchQuery || t.title.toLowerCase().includes(searchQuery)));
+                const totalMD = sTasks.reduce((acc, t) => acc + (parseFloat(t.manday) || 0), 0);
+                const isOver = totalMD > capacity && capacity > 0;
+                const fmt = d => d.toISOString().split('T')[0].slice(5).replace('-', '.');
+
+                return \`<div class="bg-darker border border-bordercolor p-4 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-xs transition hover:border-slate-700">
+                    <div class="w-full md:w-56 flex items-center justify-between pr-4 md:border-r border-bordercolor">
+                        <div>
+                            <div class="font-bold text-sky-300 flex items-center gap-2"><span>Sprint \${s.index}</span> <span class="text-[10px] text-slate-400 font-mono">(\${sKey})</span></div>
+                            <div class="text-[10px] text-slate-400 mt-0.5">\${fmt(s.start)} - \${fmt(s.end)}</div>
+                        </div>
+                        <button onclick="openSprintSettings('\${sKey}')" class="text-[10px] bg-card border border-bordercolor px-2.5 py-1.5 rounded-xl text-slate-300 hover:bg-slate-800 transition font-mono flex items-center gap-1 shadow-sm" title="Fejlesztői kapacitás szerkesztése">
+                            <span><b>\${totalMD}/\${capacity}</b> MD</span> \${isOver ? '<span class="text-amber-400">⚠️</span>' : ''}
+                        </button>
+                    </div>
+                    <div class="flex-1 w-full md:mx-4 flex gap-2.5 overflow-x-auto min-h-[42px] items-center pb-2 md:pb-0" ondragover="event.preventDefault(); event.dataTransfer.dropEffect = 'move';" ondrop="dropTask(event, '\${sKey}')">
+                        \${sTasks.map(t => {
+                            const urlBtn = t.url ? \`<a href="\${t.url}" target="_blank" onclick="event.stopPropagation()" class="text-sky-400 hover:text-sky-300 transition shrink-0" title="Jira megnyitása">🔗</a>\` : '';
+                            const isChecked = t.completed ? 'checked' : '';
+                            const completedStyle = t.completed ? 'bg-slate-900/40 border border-slate-800/80 text-slate-500 opacity-60 line-through' : 'bg-card border border-bordercolor text-slate-200 shadow-sm hover:border-slate-700';
+                            
+                            return \`<div class="\${completedStyle} px-3.5 py-2 rounded-xl text-[11px] cursor-grab whitespace-nowrap flex items-center gap-2 transition" draggable="true" ondragstart="handleDragStart(event, \${t.id})">
+                                <label class="relative flex items-center justify-center cursor-pointer shrink-0">
+                                    <input type="checkbox" \${isChecked} onchange="toggleTaskComplete(\${t.id}, this.checked)" onclick="event.stopPropagation()" class="peer sr-only">
+                                    <div class="w-4 h-4 bg-darker border border-bordercolor rounded-md peer-checked:bg-indigo-600 peer-checked:border-indigo-500 transition flex items-center justify-center">
+                                        <svg class="w-3 h-3 text-white opacity-0 peer-checked:opacity-150 transition" viewBox="0 0 12 10" fill="none"><path d="M1 5l3.5 3.5L11 1" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                    </div>
+                                </label>
+                                <span class="cursor-pointer hover:underline truncate max-w-[200px]" onclick="openEditTaskModal(\${t.id})"><b class="text-indigo-400 font-mono text-[10px] mr-1">[\${t.project_name}]</b>\${t.title} <span class="text-slate-400 font-mono text-[10px]">(\${t.manday}MD)</span></span>
+                                <div class="flex items-center gap-1.5 shrink-0 ml-1">
+                                    \${urlBtn}
+                                    <button onclick="openEditTaskModal(\${t.id})" class="text-slate-400 hover:text-indigo-300 transition" title="Szerkesztés">✏️</button>
+                                    <button onclick="deleteTask(\${t.id})" class="text-rose-400 hover:text-rose-300 transition" title="Törlés">×</button>
+                                </div>
+                            \</div>\`;
+                        }).join('') || '<span class="text-[10px] text-slate-600 italic pointer-events-none py-2">Húzd ide a feladatot...</span>'}
+                    </div>
+                </div>\`;
+            }).join('') || '<div class="text-xs text-slate-500">Nincs megjelenítendő sprint ebben az időszakban.</div>';
+        }
+
+        function openSprintSettings(sKey) {
+            document.getElementById('activeSprintKey').value = sKey;
+            document.getElementById('sprintModalTitle').innerText = \`Sprint (\${sKey}) Fejlesztők\`;
+            const devs = sprintDevs[sKey] || [];
+            renderDeveloperRows(devs);
+            document.getElementById('sprintSettingsModal').classList.replace('hidden', 'flex');
+        }
+
+        function renderDeveloperRows(devs) {
+            const container = document.getElementById('developer-list-container');
+            container.innerHTML = devs.map((d, index) => \`
+                <div class="flex items-center gap-2 bg-darker p-3 rounded-2xl border border-bordercolor dev-row shadow-sm">
+                    <input type="text" placeholder="Fejlesztő neve" value="\${d.developer_name || ''}" class="dev-name bg-card border border-bordercolor rounded-xl p-2.5 text-xs text-white flex-1 outline-none focus:border-indigo-500 transition">
+                    <input type="number" step="0.5" placeholder="MD" value="\${d.manday || 0}" class="dev-manday bg-card border border-bordercolor rounded-xl p-2.5 text-xs text-white w-20 outline-none focus:border-indigo-500 transition">
+                    <button onclick="this.closest('.dev-row').remove()" class="text-slate-500 hover:text-rose-400 p-2 font-bold transition">×</button>
+                </div>
+            \`).join('') || '<div class="text-xs text-slate-500 text-center py-4">Még nincsenek fejlesztők rögzítve ebben a sprintben.</div>';
+        }
+
+        function addDeveloperRow() {
+            const container = document.getElementById('developer-list-container');
+            if(container.querySelector('.text-slate-500')) container.innerHTML = '';
+            const div = document.createElement('div');
+            div.className = 'flex items-center gap-2 bg-darker p-3 rounded-2xl border border-bordercolor dev-row shadow-sm';
+            div.innerHTML = \`
+                <input type="text" placeholder="Fejlesztő neve" value="" class="dev-name bg-card border border-bordercolor rounded-xl p-2.5 text-xs text-white flex-1 outline-none focus:border-indigo-500 transition">
+                <input type="number" step="0.5" placeholder="MD" value="5" class="dev-manday bg-card border border-bordercolor rounded-xl p-2.5 text-xs text-white w-20 outline-none focus:border-indigo-500 transition">
+                <button onclick="this.closest('.dev-row').remove()" class="text-slate-500 hover:text-rose-400 p-2 font-bold transition">×</button>
+            \`;
+            container.appendChild(div);
+        }
+
+        function closeSprintSettingsModal() { document.getElementById('sprintSettingsModal').classList.replace('flex', 'hidden'); }
+
+        async function saveSprintCapacity() {
+            const sKey = document.getElementById('activeSprintKey').value;
+            const rows = document.querySelectorAll('.dev-row');
+            let devs = [];
+            rows.forEach(r => {
+                const name = r.querySelector('.dev-name').value.trim();
+                const manday = parseFloat(r.querySelector('.dev-manday').value) || 0;
+                if(name) devs.push({ developer_name: name, manday });
+            });
+
+            await fetch('/api/developer-capacities', { 
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify({ sprint_key: sKey, developers: devs }) 
+            });
+            closeSprintSettingsModal(); 
+            loadData();
+        }
+
+        function openNewProjectModal() { document.getElementById('projectModal').classList.replace('hidden', 'flex'); }
+        function closeNewProjectModal() { document.getElementById('projectModal').classList.replace('flex', 'hidden'); }
+        async function saveNewProject() {
+            const name = document.getElementById('modalProjectName').value.trim();
+            if(!name) return;
+            await fetch('/api/projects', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name}) });
+            closeNewProjectModal(); loadData();
+        }
+
+        function openSettingsModal() {
+            document.getElementById('setStartDayOfWeek').value = settings.start_day_of_week ?? 3;
+            document.getElementById('setSprintDays').value = settings.sprint_days || 7;
+            document.getElementById('setViewStartDate').value = settings.view_start_date || '2026-01-01';
+            document.getElementById('setViewEndDate').value = settings.view_end_date || '2026-12-31';
+            document.getElementById('settingsModal').classList.replace('hidden', 'flex');
+        }
+        function closeSettingsModal() { document.getElementById('settingsModal').classList.replace('flex', 'hidden'); }
+        async function saveSettings() {
+            settings.start_day_of_week = parseInt(document.getElementById('setStartDayOfWeek').value) || 3;
+            settings.sprint_days = parseInt(document.getElementById('setSprintDays').value) || 7;
+            settings.view_start_date = document.getElementById('setViewStartDate').value;
+            settings.view_end_date = document.getElementById('setViewEndDate').value;
+            await fetch('/api/settings', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(settings) });
+            closeSettingsModal(); loadData();
+        }
+
+        function openNewTaskModal() {
+            if (projects.length === 0) return alert('Előbb hozz létre egy projektet!');
+            document.getElementById('modalTaskId').value = '';
+            document.getElementById('taskModalTitle').innerText = 'Új Feladat';
+            document.getElementById('modalTitle').value = '';
+            document.getElementById('modalUrl').value = '';
+            document.getElementById('modalManday').value = '3';
+            document.getElementById('modalProjectSelect').innerHTML = projects.map(p => \`<option value="\${p.name}">\${p.name}</option>\`).join('');
+            if (selectedProject !== 'Összes') document.getElementById('modalProjectSelect').value = selectedProject;
+            document.getElementById('taskModal').classList.replace('hidden', 'flex');
+        }
+
+        function openEditTaskModal(id) {
+            const task = tasks.find(t => t.id === id);
+            if (!task) return;
+            document.getElementById('modalTaskId').value = task.id;
+            document.getElementById('taskModalTitle').innerText = 'Feladat Szerkesztése';
+            document.getElementById('modalTitle').value = task.title || '';
+            document.getElementById('modalUrl').value = task.url || '';
+            document.getElementById('modalManday').value = task.manday || 1;
+            document.getElementById('modalProjectSelect').innerHTML = projects.map(p => \`<option value="\${p.name}">\${p.name}</option>\`).join('');
+            document.getElementById('modalProjectSelect').value = task.project_name || (projects[0] ? projects[0].name : '');
+            document.getElementById('taskModal').classList.replace('hidden', 'flex');
+        }
+
+        function closeNewTaskModal() { document.getElementById('taskModal').classList.replace('flex', 'hidden'); }
+
+        async function saveTask() {
+            const id = document.getElementById('modalTaskId').value;
+            const title = document.getElementById('modalTitle').value.trim();
+            const project_name = document.getElementById('modalProjectSelect').value;
+            const manday = parseFloat(document.getElementById('modalManday').value) || 1;
+            const url = document.getElementById('modalUrl').value.trim();
+            if(!title) return;
+
+            if (id) {
+                await fetch(\`/api/tasks/\${id}\`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({title, manday, project_name, url})
+                });
+            } else {
+                await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({title, manday, project_name, url, week_number: 'backlog'})
+                });
+            }
+            closeNewTaskModal();
+            loadData();
+        }
+
+        async function moveTask(taskId, weekNumber) {
+            await fetch(\`/api/tasks/\${taskId}/schedule\`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({week_number: weekNumber}) });
+            loadData();
+        }
+
+        async function toggleTaskComplete(taskId, isCompleted) {
+            await fetch(\`/api/tasks/\${taskId}/complete\`, { 
+                method: 'PATCH', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify({ completed: isCompleted ? 1 : 0 }) 
+            });
+            loadData();
+        }
+
+        async function deleteTask(id) {
+            await fetch(\`/api/tasks/\${id}\`, { method: 'DELETE' });
+            loadData();
+        }
+
+        setTimeout(() => { changeRoadmapView('annual'); }, 100);
+
+        loadData();
+    </script>
+</body>
+</html>`);
+});
+
+app.get('/api/tasks', (req, res) => {
+    db.all("SELECT * FROM tasks", [], (err, rows) => res.json(rows || []));
+});
+
+app.post('/api/tasks', (req, res) => {
+    const { title, manday, project_name, week_number, url } = req.body;
+    db.run(`INSERT INTO tasks (title, manday, project_name, week_number, url, completed) VALUES (?, ?, ?, ?, ?, 0)`, 
+        [title || 'Névtelen', parseFloat(manday) || 1, project_name || 'Általános', week_number || 'backlog', url || ''], 
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ id: this.lastID });
+        }
+    );
+});
+
+app.put('/api/tasks/:id', (req, res) => {
+    const { title, manday, project_name, url } = req.body;
+    db.run(`UPDATE tasks SET title = ?, manday = ?, project_name = ?, url = ? WHERE id = ?`,
+        [title, parseFloat(manday) || 1, project_name, url || '', req.params.id],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
+        }
+    );
+});
+
+app.patch('/api/tasks/:id/schedule', (req, res) => {
+    db.run(`UPDATE tasks SET week_number = ? WHERE id = ?`, [req.body.week_number, req.params.id], () => res.json({ success: true }));
+});
+
+app.patch('/api/tasks/:id/complete', (req, res) => {
+    db.run(`UPDATE tasks SET completed = ? WHERE id = ?`, [req.body.completed ? 1 : 0, req.params.id], () => res.json({ success: true }));
+});
+
+app.delete('/api/tasks/:id', (req, res) => {
+    db.run(`DELETE FROM tasks WHERE id = ?`, [req.params.id], () => res.json({ success: true }));
+});
+
+app.get('/api/projects', (req, res) => {
+    db.all("SELECT * FROM projects", [], (err, rows) => res.json(rows || []));
+});
+
+app.post('/api/projects', (req, res) => {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Név kötelező' });
+    db.run(`INSERT OR IGNORE INTO projects (name) VALUES (?)`, [name], () => res.json({ success: true }));
+});
+
+app.get('/api/settings', (req, res) => {
+    db.all("SELECT * FROM settings", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const settings = { start_day_of_week: 3, sprint_days: 7, view_start_date: '2026-01-01', view_end_date: '2026-12-31' };
+        rows.forEach(r => { 
+            try { settings[r.key] = JSON.parse(r.value); } catch(e) { settings[r.key] = r.value; }
+        });
+        res.json(settings);
+    });
+});
+
+app.post('/api/settings', (req, res) => {
+    const entries = Object.entries(req.body);
+    db.serialize(() => {
+        const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
+        entries.forEach(([key, value]) => {
+            stmt.run(key, JSON.stringify(value));
+        });
+        stmt.finalize();
+    });
+    res.json(req.body);
+});
+
+app.get('/api/developer-capacities', (req, res) => {
+    db.all("SELECT * FROM developer_capacities", [], (err, rows) => {
+        if (err) return res.json({});
+        const map = {};
+        rows.forEach(r => {
+            if (!map[r.sprint_key]) map[r.sprint_key] = [];
+            map[r.sprint_key].push({ developer_name: r.developer_name, manday: r.manday });
+        });
+        res.json(map);
+    });
+});
+
+app.post('/api/developer-capacities', (req, res) => {
+    const { sprint_key, developers } = req.body;
+    db.serialize(() => {
+        db.run(`DELETE FROM developer_capacities WHERE sprint_key = ?`, [sprint_key], () => {
+            const stmt = db.prepare(`INSERT INTO developer_capacities (sprint_key, developer_name, manday) VALUES (?, ?, ?)`);
+            (developers || []).forEach(d => {
+                stmt.run(sprint_key, d.developer_name, parseFloat(d.manday) || 0);
+            });
+            stmt.finalize();
+            res.json({ success: true });
+        });
+    });
+});
+
+app.get('/api/milestones', (req, res) => {
+    db.all("SELECT * FROM milestones ORDER BY date ASC", [], (err, rows) => res.json(rows || []));
+});
+
+app.post('/api/milestones', (req, res) => {
+    const { title, date, type, project_name } = req.body;
+    db.run(`INSERT INTO milestones (title, date, type, project_name) VALUES (?, ?, ?, ?)`,
+        [title || 'Mérföldkő', date || new Date().toISOString().split('T')[0], type || 'code_freeze', project_name || ''],
+        function(err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ id: this.lastID });
+        }
+    );
+});
+
+app.put('/api/milestones/:id', (req, res) => {
+    const { title, date, type, project_name } = req.body;
+    db.run(`UPDATE milestones SET title = ?, date = ?, type = ?, project_name = ? WHERE id = ?`,
+        [title, date, type, project_name || '', req.params.id],
+        (err) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
+        }
+    );
+});
+
+app.delete('/api/milestones/:id', (req, res) => {
+    db.run(`DELETE FROM milestones WHERE id = ?`, [req.params.id], () => res.json({ success: true }));
+});
+
+app.listen(PORT, () => console.log(`Szerver fut a http://localhost:${PORT} címen`));
