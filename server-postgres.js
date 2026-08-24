@@ -175,7 +175,8 @@ app.put('/api/tasks/:id', async (req, res) => {
         const manday = parseFloat(req.body.manday) || 1;
         const projectName = req.body.project_name || 'Általános';
         const url = req.body.url || '';
-        const priority = req.body.priority || null;    
+        const priority = req.body.priority || null;
+        const weekNumber = req.body.week_number || null;
 
         const result = await pool.query(
             `
@@ -184,11 +185,20 @@ app.put('/api/tasks/:id', async (req, res) => {
                 title = $1,
                 manday = $2,
                 project_name = $3,
-                url = $4, 
-                priority = $5
-            WHERE id = $6
+                url = $4,
+                priority = $5,
+                week_number = COALESCE($6, week_number)
+            WHERE id = $7
             `,
-            [title, manday, projectName, url, priority, req.params.id]
+            [
+                title,
+                manday,
+                projectName,
+                url,
+                priority,
+                weekNumber,
+                req.params.id
+            ]
         );
 
         res.json({
