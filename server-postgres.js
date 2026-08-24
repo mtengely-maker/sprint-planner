@@ -185,7 +185,7 @@ app.put('/api/tasks/:id', async (req, res) => {
                 manday = $2,
                 project_name = $3,
                 url = $4, 
-                pirority = $5
+                priority = $5
             WHERE id = $6
             `,
             [title, manday, projectName, url, priority, req.params.id]
