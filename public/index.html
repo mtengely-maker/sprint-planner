@@ -241,7 +241,18 @@
                     <option value="medium">Medium</option>
                     <option value="low">Low</option>
                 </select>
-            </div>        
+            </div>
+            <div>
+    <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">
+        Jira URL / Hivatkozás
+    </label>
+    <input
+        type="url"
+        id="modalUrl"
+        placeholder="https://jira.company.com/browse/KEY-123"
+        class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition"
+    >
+</div>        
             <div class="flex justify-end gap-2 pt-2 border-t border-bordercolor">
                 <button onclick="closeNewTaskModal()" class="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 border border-bordercolor rounded-xl text-xs text-slate-300 transition">Mégse</button>
                 <button onclick="saveTask()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition shadow-lg shadow-indigo-600/25">Mentés</button>
