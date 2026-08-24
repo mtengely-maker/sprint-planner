@@ -696,8 +696,26 @@
                 const sKey = s.key;
                 const capacity = getSprintTotalCapacity(sKey);
                 const sTasks = tasks.filter(t => (selectedProject === 'Összes' || t.project_name === selectedProject) && t.week_number === sKey && (!searchQuery || t.title.toLowerCase().includes(searchQuery)));
-                const totalMD = sTasks.reduce((acc, t) => acc + (parseFloat(t.manday) || 0), 0);
-                const isOver = totalMD > capacity && capacity > 0;
+                const totalMD = sTasks.reduce(
+    (acc, t) => acc + (parseFloat(t.manday) || 0),
+    0
+);
+
+const completedMD = sTasks
+    .filter(t => Boolean(t.completed))
+    .reduce(
+        (acc, t) => acc + (parseFloat(t.manday) || 0),
+        0
+    );
+
+const remainingMD = sTasks
+    .filter(t => !Boolean(t.completed))
+    .reduce(
+        (acc, t) => acc + (parseFloat(t.manday) || 0),
+        0
+    );
+
+const isOver = totalMD > capacity && capacity > 0;
                 const fmt = d => d.toISOString().split('T')[0].slice(5).replace('-', '.');
 
                 return `<div class="bg-darker border border-bordercolor p-4 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-xs transition hover:border-slate-700">
