@@ -51,6 +51,11 @@ async function initDatabase() {
         ADD COLUMN IF NOT EXISTS completed INTEGER DEFAULT 0;
     `);
 
+await pool.query(`
+    ALTER TABLE tasks
+    ADD COLUMN IF NOT EXISTS priority TEXT;
+`);
+
     await pool.query(`
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -112,7 +117,8 @@ app.get('/api/tasks', async (req, res) => {
                 project_name,
                 week_number,
                 url,
-                completed
+                completed,
+                priority
             FROM tasks
             ORDER BY id ASC
         `);
@@ -130,6 +136,7 @@ app.post('/api/tasks', async (req, res) => {
         const projectName = req.body.project_name || 'Általános';
         const weekNumber = req.body.week_number || 'backlog';
         const url = req.body.url || '';
+        const priority = req.body.priority || null;
 
         const result = await pool.query(
             `
@@ -139,9 +146,10 @@ app.post('/api/tasks', async (req, res) => {
                 project_name,
                 week_number,
                 url,
-                completed
+                completed,
+                priority
             )
-            VALUES ($1, $2, $3, $4, $5, 0)
+            VALUES ($1, $2, $3, $4, $5, 0, $6)
             RETURNING
                 id::int AS id,
                 title,
@@ -149,9 +157,10 @@ app.post('/api/tasks', async (req, res) => {
                 project_name,
                 week_number,
                 url,
-                completed
+                completed, 
+                priority
             `,
-            [title, manday, projectName, weekNumber, url]
+            [title, manday, projectName, weekNumber, url, priority]
         );
 
         res.json(result.rows[0]);
@@ -166,6 +175,7 @@ app.put('/api/tasks/:id', async (req, res) => {
         const manday = parseFloat(req.body.manday) || 1;
         const projectName = req.body.project_name || 'Általános';
         const url = req.body.url || '';
+        const priority = req.body.priority || null;    
 
         const result = await pool.query(
             `
@@ -174,10 +184,11 @@ app.put('/api/tasks/:id', async (req, res) => {
                 title = $1,
                 manday = $2,
                 project_name = $3,
-                url = $4
-            WHERE id = $5
+                url = $4, 
+                pirority = $5
+            WHERE id = $6
             `,
-            [title, manday, projectName, url, req.params.id]
+            [title, manday, projectName, url, priority, req.params.id]
         );
 
         res.json({
