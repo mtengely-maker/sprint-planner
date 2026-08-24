@@ -919,9 +919,23 @@ const isOver = totalMD > capacity && capacity > 0;
 }
 
         async function moveTask(taskId, weekNumber) {
-            await fetch(`/api/tasks/${taskId}/schedule`, { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({week_number: weekNumber}) });
-            loadData();
-        }
+    const response = await fetch(`/api/tasks/${taskId}/schedule`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            week_number: weekNumber
+        })
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Task mozgatási hiba:', response.status, errorText);
+        alert('A feladat mozgatása nem sikerült.');
+        return;
+    }
+
+    await loadData();
+}
 
         async function toggleTaskComplete(taskId, isCompleted) {
             await fetch(`/api/tasks/${taskId}/complete`, { 

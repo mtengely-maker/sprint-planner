@@ -221,6 +221,27 @@ app.patch('/api/tasks/:id/schedule', async (req, res) => {
         sendError(res, err);
     }
 });
+app.post('/api/tasks/:id/schedule', async (req, res) => {
+    try {
+        const weekNumber = req.body.week_number || 'backlog';
+
+        const result = await pool.query(
+            `
+            UPDATE tasks
+            SET week_number = $1
+            WHERE id = $2
+            `,
+            [weekNumber, req.params.id]
+        );
+
+        res.json({
+            success: true,
+            changed: result.rowCount
+        });
+    } catch (err) {
+        sendError(res, err);
+    }
+});
 
 app.patch('/api/tasks/:id/complete', async (req, res) => {
     try {
