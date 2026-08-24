@@ -231,10 +231,17 @@
                 <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Becsült MD (Manday)</label>
                 <input type="number" id="modalManday" min="0.5" step="0.5" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition">
             </div>
-            <div>
-                <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">Jira URL / Hivatkozás</label>
-                <input type="url" id="modalUrl" placeholder="https://jira.company.com/browse/KEY-123" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition">
-            </div>
+            <div>   
+                <label class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1 block">
+        Prioritás
+                </label>
+                <select id="modalPriority" class="w-full bg-darker border border-bordercolor rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 transition">
+                    <option value="">Nincs megadva</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                </select>
+            </div>        
             <div class="flex justify-end gap-2 pt-2 border-t border-bordercolor">
                 <button onclick="closeNewTaskModal()" class="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 border border-bordercolor rounded-xl text-xs text-slate-300 transition">Mégse</button>
                 <button onclick="saveTask()" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition shadow-lg shadow-indigo-600/25">Mentés</button>
@@ -778,6 +785,7 @@
             document.getElementById('modalTitle').value = '';
             document.getElementById('modalUrl').value = '';
             document.getElementById('modalManday').value = '';
+            document.getElementById('modalPriority').value = '';
             document.getElementById('modalProjectSelect').innerHTML = projects.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
             if (selectedProject !== 'Összes') document.getElementById('modalProjectSelect').value = selectedProject;
             document.getElementById('taskModal').classList.replace('hidden', 'flex');
@@ -791,6 +799,7 @@
             document.getElementById('modalTitle').value = task.title || '';
             document.getElementById('modalUrl').value = task.url || '';
             document.getElementById('modalManday').value = task.manday ?? '';
+            document.getElementById('modalPriority').value = task.priority ?? '';
             document.getElementById('modalProjectSelect').innerHTML = projects.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
             document.getElementById('modalProjectSelect').value = task.project_name || (projects[0] ? projects[0].name : '');
             document.getElementById('taskModal').classList.replace('hidden', 'flex');
@@ -805,6 +814,7 @@
     const mandayValue = document.getElementById('modalManday').value.trim();
     const manday = Number.parseFloat(mandayValue);
     const url = document.getElementById('modalUrl').value.trim();
+    const priority = document.getElementById('modalPriority').value || null;
 
     if (!title) {
         alert('Add meg a feladat nevét!');
@@ -828,7 +838,8 @@
                 title,
                 manday,
                 project_name,
-                url
+                url,
+                priority
             })
         });
     } else {
@@ -840,6 +851,7 @@
                 manday,
                 project_name,
                 url,
+                priority,
                 week_number: 'backlog'
             })
         });
