@@ -919,36 +919,27 @@ const isOver = totalMD > capacity && capacity > 0;
 }
 
         async function moveTask(taskId, weekNumber) {
-    const task = tasks.find(t => Number(t.id) === Number(taskId));
-
-    if (!task) {
-        console.error('A mozgatandó task nem található:', taskId);
-        alert('A feladat nem található.');
-        return;
-    }
-
-    const response = await fetch(`/api/tasks/${taskId}`, {
-        method: 'PUT',
+    const response = await fetch('/api/tasks', {
+        method: 'POST',
         headers: {
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            title: task.title,
-            manday: task.manday,
-            project_name: task.project_name,
-            url: task.url || '',
-            priority: task.priority || null,
+            action: 'schedule',
+            id: Number(taskId),
             week_number: weekNumber
         })
     });
 
     if (!response.ok) {
         const errorText = await response.text();
+
         console.error(
             'Task mozgatási hiba:',
             response.status,
             errorText
         );
+
         alert('A feladat mozgatása nem sikerült.');
         return;
     }

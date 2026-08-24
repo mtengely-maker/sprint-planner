@@ -131,6 +131,47 @@ app.get('/api/tasks', async (req, res) => {
 
 app.post('/api/tasks', async (req, res) => {
     try {
+        if (req.body.action === 'schedule') {
+            const taskId = Number(req.body.id);
+            const weekNumber = req.body.week_number || 'backlog';
+
+            if (!Number.isInteger(taskId) || taskId <= 0) {
+                return res.status(400).json({
+                    error: 'Érvénytelen task azonosító'
+                });
+            }
+
+            const result = await pool.query(
+                `
+                UPDATE tasks
+                SET week_number = $1
+                WHERE id = $2
+                RETURNING
+                    id::int AS id,
+                    title,
+                    manday::float AS manday,
+                    project_name,
+                    week_number,
+                    url,
+                    completed,
+                    priority
+                `,
+                [weekNumber, taskId]
+            );
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({
+                    error: 'A feladat nem található'
+                });
+            }
+
+            return res.json({
+                success: true,
+                changed: result.rowCount,
+                task: result.rows[0]
+            });
+        }
+
         const title = req.body.title || 'Névtelen feladat';
         const manday = parseFloat(req.body.manday) || 1;
         const projectName = req.body.project_name || 'Általános';
@@ -157,13 +198,20 @@ app.post('/api/tasks', async (req, res) => {
                 project_name,
                 week_number,
                 url,
-                completed, 
+                completed,
                 priority
             `,
-            [title, manday, projectName, weekNumber, url, priority]
+            [
+                title,
+                manday,
+                projectName,
+                weekNumber,
+                url,
+                priority
+            ]
         );
 
-        res.json(result.rows[0]);
+        return res.json(result.rows[0]);
     } catch (err) {
         sendError(res, err);
     }
