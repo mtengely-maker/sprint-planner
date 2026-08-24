@@ -783,18 +783,18 @@
             document.getElementById('taskModal').classList.replace('hidden', 'flex');
         }
 
-        function openEditTaskModal(id) function openEditTaskModal(id) {
-    const task = tasks.find(t => t.id === id);
-    if (!task) return;
-    document.getElementById('modalTaskId').value = task.id;
-    document.getElementById('taskModalTitle').innerText = 'Feladat Szerkesztése';
-    document.getElementById('modalTitle').value = task.title || '';
-    document.getElementById('modalUrl').value = task.url || '';
-    document.getElementById('modalManday').value = task.manday || 1;
-    document.getElementById('modalProjectSelect').innerHTML = projects.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
-    document.getElementById('modalProjectSelect').value = task.project_name || (projects[0] ? projects[0].name : '');
-    document.getElementById('taskModal').classList.replace('hidden', 'flex');
-}
+        function openEditTaskModal(id) {
+            const task = tasks.find(t => t.id === id);
+            if (!task) return;
+            document.getElementById('modalTaskId').value = task.id;
+            document.getElementById('taskModalTitle').innerText = 'Feladat Szerkesztése';
+            document.getElementById('modalTitle').value = task.title || '';
+            document.getElementById('modalUrl').value = task.url || '';
+            document.getElementById('modalManday').value = task.manday || 1;
+            document.getElementById('modalProjectSelect').innerHTML = projects.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
+            document.getElementById('modalProjectSelect').value = task.project_name || (projects[0] ? projects[0].name : '');
+            document.getElementById('taskModal').classList.replace('hidden', 'flex');
+        }
 
         function closeNewTaskModal() { document.getElementById('taskModal').classList.replace('flex', 'hidden'); }
 
