@@ -614,16 +614,42 @@
             const devs = sprintDevs[sKey] || [];
             return devs.reduce((acc, d) => acc + (parseFloat(d.manday) || 0), 0);
         }
+        function getPriorityBadgeHtml(priority) {
+    const priorityConfig = {
+        high: {
+            label: 'HIGH',
+            className: 'bg-rose-500/10 text-rose-300 border-rose-500/25'
+        },
+        medium: {
+            label: 'MEDIUM',
+            className: 'bg-amber-500/10 text-amber-300 border-amber-500/25'
+        },
+        low: {
+            label: 'LOW',
+            className: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25'
+        }
+    };
+
+    const config = priorityConfig[priority];
+
+    if (!config) {
+        return '';
+    }
+
+    return `<span class="text-[9px] px-2 py-0.5 rounded-lg border font-bold tracking-wider ${config.className}">${config.label}</span>`;
+}
 
         function renderBacklog() {
             const list = tasks.filter(t => (selectedProject === 'Összes' || t.project_name === selectedProject) && (!t.week_number || t.week_number === 'backlog') && (!searchQuery || t.title.toLowerCase().includes(searchQuery)));
             document.getElementById('backlog-count').innerText = list.length;
             document.getElementById('backlog-list').innerHTML = list.map(t => {
                 const urlBtn = t.url ? `<a href="${t.url}" target="_blank" onclick="event.stopPropagation()" class="text-sky-400 hover:text-sky-300 text-xs transition" title="Jira megnyitása">🔗</a>` : '';
+                const priorityBadge = getPriorityBadgeHtml(t.priority);
                 return `<div class="bg-darker p-3 rounded-2xl border border-bordercolor text-xs cursor-grab flex items-center justify-between hover:border-slate-700 transition shadow-sm" draggable="true" ondragstart="handleDragStart(event, ${t.id})">
                     <div class="flex-1 min-w-0 mr-3 cursor-pointer" onclick="openEditTaskModal(${t.id})">
                         <div class="font-semibold text-slate-200 truncate flex items-center gap-2">
                             <span class="text-[10px] px-2 py-0.5 rounded-lg bg-indigo-500/10 text-indigo-300 border border-indigo-500/25 font-mono">${t.project_name}</span>
+                            ${priorityBadge}
                             <span class="truncate">${t.title}</span>
                         </div>
                         <div class="text-[10px] text-slate-400 font-mono mt-1">${t.manday} MD</div>
