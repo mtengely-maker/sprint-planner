@@ -630,13 +630,14 @@
         }
     };
 
-    const config = priorityConfig[priority];
+    const normalizedPriority = String(priority || '').toLowerCase();
+    const config = priorityConfig[normalizedPriority];
 
     if (!config) {
         return '';
     }
 
-    return `<span class="text-[9px] px-2 py-0.5 rounded-lg border font-bold tracking-wider ${config.className}">${config.label}</span>`;
+    return `<span class="shrink-0 text-[9px] px-2 py-0.5 rounded-lg border font-bold tracking-wider ${config.className}">${config.label}</span>`;
 }
 
         function renderBacklog() {
