@@ -888,35 +888,56 @@ const isOver = totalMD > capacity && capacity > 0;
         return;
     }
 
-    if (id) {
-        await fetch(`/api/tasks/${id}`, {
-            method: 'PUT',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                title,
-                manday,
-                project_name,
-                url,
-                priority
-            })
-        });
-    } else {
-        await fetch('/api/tasks', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                title,
-                manday,
-                project_name,
-                url,
-                priority,
-                week_number: 'backlog'
-            })
-        });
-    }
+    let response;
 
-    closeNewTaskModal();
-    loadData();
+if (id) {
+    response = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            action: 'update',
+            id: Number(id),
+            title,
+            manday,
+            project_name,
+            url,
+            priority
+        })
+    });
+} else {
+    response = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            title,
+            manday,
+            project_name,
+            url,
+            priority,
+            week_number: 'backlog'
+        })
+    });
+}
+
+if (!response.ok) {
+    const errorText = await response.text();
+
+    console.error(
+        'Task mentési hiba:',
+        response.status,
+        errorText
+    );
+
+    alert('A feladat mentése nem sikerült.');
+    return;
+}
+
+closeNewTaskModal();
+await loadData();
 }
 
         async function moveTask(taskId, weekNumber) {
