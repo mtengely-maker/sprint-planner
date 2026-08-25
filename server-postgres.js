@@ -132,74 +132,74 @@ app.get('/api/tasks', async (req, res) => {
 app.post('/api/tasks', async (req, res) => {
     try {
         if (req.body.action === 'update') {
-    const taskId = Number(req.body.id);
-    const title = (req.body.title || '').trim();
-    const manday = Number.parseFloat(req.body.manday);
-    const projectName = req.body.project_name || 'Általános';
-    const url = req.body.url || '';
-    const priority = req.body.priority || null;
+            const taskId = Number(req.body.id);
+            const title = (req.body.title || '').trim();
+            const manday = Number.parseFloat(req.body.manday);
+            const projectName = req.body.project_name || 'Általános';
+            const url = req.body.url || '';
+            const priority = req.body.priority || null;
 
-    if (!Number.isInteger(taskId) || taskId <= 0) {
-        return res.status(400).json({
-            error: 'Érvénytelen task azonosító'
-        });
-    }
+            if (!Number.isInteger(taskId) || taskId <= 0) {
+                return res.status(400).json({
+                    error: 'Érvénytelen task azonosító'
+                });
+            }
 
-    if (!title) {
-        return res.status(400).json({
-            error: 'A feladat neve kötelező'
-        });
-    }
+            if (!title) {
+                return res.status(400).json({
+                    error: 'A feladat neve kötelező'
+                });
+            }
 
-    if (!Number.isFinite(manday) || manday <= 0) {
-        return res.status(400).json({
-            error: 'Érvénytelen MD-becslés'
-        });
-    }
+            if (!Number.isFinite(manday) || manday <= 0) {
+                return res.status(400).json({
+                    error: 'Érvénytelen MD-becslés'
+                });
+            }
 
-    const result = await pool.query(
-        `
-        UPDATE tasks
-        SET
-            title = $1,
-            manday = $2,
-            project_name = $3,
-            url = $4,
-            priority = $5
-        WHERE id = $6
-        RETURNING
-            id::int AS id,
-            title,
-            manday::float AS manday,
-            project_name,
-            week_number,
-            url,
-            completed,
-            priority
-        `,
-        [
-            title,
-            manday,
-            projectName,
-            url,
-            priority,
-            taskId
-        ]
-    );
+            const result = await pool.query(
+                `
+                UPDATE tasks
+                SET
+                    title = $1,
+                    manday = $2,
+                    project_name = $3,
+                    url = $4,
+                    priority = $5
+                WHERE id = $6
+                RETURNING
+                    id::int AS id,
+                    title,
+                    manday::float AS manday,
+                    project_name,
+                    week_number,
+                    url,
+                    completed,
+                    priority
+                `,
+                [
+                    title,
+                    manday,
+                    projectName,
+                    url,
+                    priority,
+                    taskId
+                ]
+            );
 
-    if (result.rowCount === 0) {
-        return res.status(404).json({
-            error: 'A feladat nem található'
-        });
-    }
+            if (result.rowCount === 0) {
+                return res.status(404).json({
+                    error: 'A feladat nem található'
+                });
+            }
 
-    return res.json({
-        success: true,
-        changed: result.rowCount,
-        task: result.rows[0]
-    });
-}
-`
+            return res.json({
+                success: true,
+                changed: result.rowCount,
+                task: result.rows[0]
+            });
+        }
+
         if (req.body.action === 'schedule') {
             const taskId = Number(req.body.id);
             const weekNumber = req.body.week_number || 'backlog';
@@ -241,12 +241,24 @@ app.post('/api/tasks', async (req, res) => {
             });
         }
 
-        const title = req.body.title || 'Névtelen feladat';
-        const manday = parseFloat(req.body.manday) || 1;
+        const title = (req.body.title || '').trim();
+        const manday = Number.parseFloat(req.body.manday);
         const projectName = req.body.project_name || 'Általános';
         const weekNumber = req.body.week_number || 'backlog';
         const url = req.body.url || '';
         const priority = req.body.priority || null;
+
+        if (!title) {
+            return res.status(400).json({
+                error: 'A feladat neve kötelező'
+            });
+        }
+
+        if (!Number.isFinite(manday) || manday <= 0) {
+            return res.status(400).json({
+                error: 'Érvénytelen MD-becslés'
+            });
+        }
 
         const result = await pool.query(
             `
